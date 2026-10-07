@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blog Platform</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:16px;color:#222}
+  header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #ddd;padding-bottom:8px}
+  input,textarea,button{font:inherit;padding:8px;margin:4px 0;width:100%;box-sizing:border-box}
+  button{width:auto;cursor:pointer;background:#2563eb;color:#fff;border:0;border-radius:6px;padding:8px 14px}
+  button.sec{background:#e5e7eb;color:#222} button.del{background:#dc2626}
+  .card{border:1px solid #ddd;border-radius:8px;padding:12px;margin:12px 0}
+  .meta{color:#666;font-size:.85rem} .err{color:#dc2626}
+  .comment{border-top:1px solid #eee;padding:8px 0}
+  a{color:#2563eb;cursor:pointer}
+</style>
+</head>
+<body>
+<header><h2 style="margin:0"><a onclick="home()">Blog</a></h2><div id="nav"></div></header>
+<p id="msg" class="err"></p>
+<main id="app"></main>
+
+<script>
+let user = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(method, url, body) {
+  const r = await fetch(url, {
+    method, headers: {'Content-Type': 'application/json'},
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { $('msg').textContent = d.error || 'error'; throw new Error(d.error); }
+  $('msg').textContent = '';
+  return d;
+}
+
+async function init() {
+  user = (await api('GET', '/api/me')).user;
+  nav(); home();
+}
+
+function nav() {
+  $('nav').innerHTML = user
+    ? `${esc(user.username)} <button class="sec" onclick="logout()">Logout</button>`
+    : `<button class="sec" onclick="authForm('login')">Login</button> <button onclick="authForm('register')">Register</button>`;
+}
+
+function authForm(mode) {
+  $('app').innerHTML = `<h3>${mode === 'login' ? 'Login' : 'Register'}</h3>
+    <input id="u" placeholder="Username"><input id="p" type="password" placeholder="Password">
+    <button onclick="auth('${mode}')">Submit</button>`;
+}
+
+async function auth(mode) {
+  const d = await api('POST', '/api/' + mode, {username: $('u').value, password: $('p').value});
+  user = {id: d.id, username: d.username};
+  nav(); home();
+}
+
+async function logout() { await api('POST', '/api/logout'); user = null; nav(); home(); }
+
+async function home() {
+  const posts = await api('GET', '/api/posts');
+  $('app').innerHTML = (user ? `<button onclick="postForm()">+ New post</button>` : '') +
+    (posts.map(p => `<div class="card">
+      <h3 style="margin:0"><a onclick="view(${p.id})">${esc(p.title)}</a></h3>
+      <div class="meta">by ${esc(p.author)} · ${esc(p.created)}</div>
+      <p>${esc(p.body.slice(0, 150))}${p.body.length > 150 ? '…' : ''}</p></div>`).join('') || '<p>No posts yet.</p>');
+}
+
+function postForm(p) {
+  $('app').innerHTML = `<h3>${p ? 'Edit' : 'New'} post</h3>
+    <input id="t" placeholder="Title" value="${p ? esc(p.title) : ''}">
+    <textarea id="b" rows="8" placeholder="Write something...">${p ? esc(p.body) : ''}</textarea>
+    <button onclick="savePost(${p ? p.id : 0})">Save</button> <button class="sec" onclick="home()">Cancel</button>`;
+}
+
+async function savePost(id) {
+  const body = {title: $('t').value, body: $('b').value};
+  if (id) { await api('PUT', '/api/posts/' + id, body); view(id); }
+  else { const d = await api('POST', '/api/posts', body); view(d.id); }
+}
+
+async function view(id) {
+  const p = await api('GET', '/api/posts/' + id);
+  const mine = user && user.id === p.user_id;
+  $('app').innerHTML = `<a onclick="home()">← Back</a>
+    <h2>${esc(p.title)}</h2><div class="meta">by ${esc(p.author)} · ${esc(p.created)}</div>
+    <p style="white-space:pre-wrap">${esc(p.body)}</p>
+    ${mine ? `<button class="sec" onclick='postForm(${JSON.stringify({id: p.id, title: p.title, body: p.body}).replace(/'/g, "&#39;")})'>Edit</button>
+              <button class="del" onclick="delPost(${p.id})">Delete</button>` : ''}
+    <h3>Comments (${p.comments.length})</h3>
+    ${p.comments.map(c => `<div class="comment"><b>${esc(c.author)}</b>
+      <span class="meta">${esc(c.created)}</span>
+      ${user && user.id === c.user_id ? `<a onclick="delComment(${c.id},${p.id})">delete</a>` : ''}
+      <div>${esc(c.body)}</div></div>`).join('')}
+    ${user ? `<textarea id="c" rows="3" placeholder="Add a comment"></textarea>
+              <button onclick="addComment(${p.id})">Comment</button>`
+           : '<p class="meta">Login to comment.</p>'}`;
+}
+
+async function delPost(id) { if (confirm('Delete post?')) { await api('DELETE', '/api/posts/' + id); home(); } }
+async function addComment(id) { await api('POST', `/api/posts/${id}/comments`, {body: $('c').value}); view(id); }
+async function delComment(cid, pid) { await api('DELETE', '/api/comments/' + cid); view(pid); }
+
+init();
+</script>
+</body>
+</html>
